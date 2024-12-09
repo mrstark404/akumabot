@@ -217,5 +217,5 @@ async def main():
         logging.error(f"Error in main function: {str(error)}")
 
 if __name__ == '__main__':
-    # keep_alive()
+    keep_alive()
     asyncio.run(main())

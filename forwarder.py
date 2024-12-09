@@ -1,9 +1,8 @@
-#video duration filter added
-
 from telethon import TelegramClient, errors , types
 from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
 from telethon.sync import TelegramClient,events
+from telethon.tl.types import MessageMediaDocument, DocumentAttributeVideo
 from db import *
 from config import *
 import asyncio
@@ -16,6 +15,15 @@ logging.basicConfig(
     level=logging.INFO
 
 )
+
+#================#
+api_id = API_ID
+api_hash = API_HASH
+session = SESSION
+source_id = SRC_ID
+batch_size = BATCH_SIZE
+max_attempts = MAX_ATTEMPTS
+#=================#
 
 async def rename(msg_caption):
     filter_msgs = [
@@ -33,27 +41,38 @@ async def rename(msg_caption):
     renamed_msg = regex.sub('', msg_caption).strip()
     return renamed_msg
 
-async def video_duration(client, channel_id,msg_id):
+def get_video_duration(message):
+    # Check if the message has media and it's a document
+    if isinstance(message.media, MessageMediaDocument):
+        # Access the document's attributes
+        for attribute in message.media.document.attributes:
+            if isinstance(attribute, DocumentAttributeVideo):
+                # Return the duration
+                return attribute.duration
+    return None
+
+async def filter_media_file(client, channel_id,msg_id):
     try:
         message = await client.get_messages(channel_id, ids=msg_id)
-        #video above 10 min
-        media = message.media
-        if hasattr(media, 'video'):
-            return media.video.duration > 600
-        elif hasattr(media, 'document'):
-            return True
+        duration_in_seconds = get_video_duration(message)
+        
+        if duration_in_seconds:
+            return duration_in_seconds > 600
+        
+        elif message.media.document.size:
+            size_in_bytes = message.media.document.size
+            size_in_mb = size_in_bytes / (1024 * 1024)
+            return int(size_in_mb) > 30
+        
         else:
             return False
+        
     except Exception as e:
         print("An error occurred while fetching video duration:", e)
         
-async def source_msg_filter(client, channel_id):
+async def rename_media_file(client, channel_id):
     async for message in client.iter_messages(channel_id):
         try:
-            if message.media and isinstance(message.media, types.MessageMediaDocument):
-                document = message.media.document
-                if document.mime_type == 'image/webp' and any(isinstance(attribute, types.DocumentAttributeSticker) for attribute in document.attributes):
-                    continue  # Skip processing stickers
             formatted_msg = await rename(message.text)
             if formatted_msg != message.text:
                 await client.edit_message(channel_id, message.id, formatted_msg)
@@ -61,12 +80,22 @@ async def source_msg_filter(client, channel_id):
             logging.warning(f"FloodWait: Sleeping for {e.seconds} seconds.")
             await asyncio.sleep(e.seconds)
         except Exception as e:
-            logging.error(f"source_msg_filter() : {e}")
+            logging.error(f"rename_media_file() : {e}")
         finally:
-            break 
+            break
+         
+def is_sticker(message):
+    if isinstance(message.media, types.MessageMediaDocument):
+        document = message.media.document
+        if document.mime_type in {'image/gif', 'image/webp', 'application/pdf'}:
+            return True
+        
+        for attribute in document.attributes:
+            if isinstance(attribute, types.DocumentAttributeAnimated):
+                return True
+    return False
 
 async def forward_message(client, source_id, destination_id, to_msg, from_msg, batch_msg, max_attempts):
-    
     try:
         if from_msg == 0:
             from_msg = 1
@@ -84,11 +113,12 @@ async def forward_message(client, source_id, destination_id, to_msg, from_msg, b
             for _ in range(messages_to_send):
                 message = await client.get_messages(source_id, ids=from_msg)
                 if message and message.media:
-                    if not is_gif(message):
-                        filered_msg = await video_duration(client, source_id, from_msg) # filtering messages on the basis of duration
+                    if not is_sticker(message):
+                        # filtering messages on the basis of duration
+                        filered_msg = await filter_media_file(client, source_id, from_msg) 
                         if filered_msg:
                             await client.send_message(destination_id, message)
-                            await source_msg_filter(client,destination_id)
+                            await rename_media_file(client, destination_id)
                             found_media = True
                             attempts = 0  # Reset attempts when a media message is found
                 else:
@@ -117,15 +147,6 @@ async def forward_message(client, source_id, destination_id, to_msg, from_msg, b
     except Exception as error:
         logging.error(f"forward_message() : {error}")
 
-def is_gif(message):
-    if isinstance(message.media, types.MessageMediaDocument):
-        document = message.media.document
-        if document.mime_type == 'image/gif':
-            return True
-        for attribute in document.attributes:
-            if isinstance(attribute, types.DocumentAttributeAnimated):
-                return True
-    return False
 
 async def getVars(source_id: int, channel_title: str) -> list[int]:
     try:
@@ -135,60 +156,66 @@ async def getVars(source_id: int, channel_title: str) -> list[int]:
         else:
             return DST_ID, FROM_MSG
     except Exception as error:
-        logging.error(f'getVars() : {error}')
+        logging.error(f'Error in {getVars.__name__} function: {str(error)}')
     
 
 async def main():
     try:
-        #================#
-        api_id = API_ID
-        api_hash = API_HASH
-        session = SESSION
-        source_id = SRC_ID
-        batch_size = BATCH_SIZE
-        max_attempts = MAX_ATTEMPTS
-        #=================#
-        
-        client = TelegramClient(StringSession(session), api_id, api_hash)
+        # Initialize the Telegram client
+        client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
+
+        # Message queue to process new messages
         message_queue = asyncio.Queue()
+
         async with client:
-            try:
-                
-                await client.start()
-                channel = await client.get_entity(SRC_ID)
+            # Start the client
+            await client.start()
 
-                @client.on(events.NewMessage(chats=channel))
-                async def handler(event):
-                    await message_queue.put(event)
+        #     # Get the source channel details
+            source_channel = await client.get_entity(SRC_ID)
+            destination_channel = await client.get_entity(DST_ID)
+            
+            logging.info(f"Source Channel: {source_channel.title} ({SRC_ID}), Destination Channel: {destination_channel.title} ({DST_ID})")
+            logging.info(f"Monitoring Source Channel")
 
-                async def message_processor():
-                    while True:
-                        event = await message_queue.get()
-                        try:
-                            vars = await getVars(SRC_ID, channel.title)
-                            destination_id, from_msg = vars[0], vars[1]
-                            to_msg = event.message.id
-                            await asyncio.sleep(1) 
-                            await forward_message(client, source_id, destination_id, to_msg, from_msg, batch_size, max_attempts)
-                        except FloodWaitError as e:
-                            logging.warning(f"Flood wait error: Waiting for {e.seconds} seconds")
-                            await asyncio.sleep(e.seconds)
-                        finally:
-                            message_queue.task_done()
+            # Event handler for new messages
+            @client.on(events.NewMessage(chats=source_channel))
+            async def handle_new_message(event):
+                await message_queue.put(event)  # Add new messages to the queue
 
-                # Start the message processor task
-                asyncio.create_task(message_processor())
+            # Process messages from the queue
+            async def process_messages():
+                while True:
+                    event = await message_queue.get()  # Get a message from the queue
+                    try:
+                        # Fetch destination ID and starting message
+                        destination_id, from_msg = await getVars(SRC_ID, source_channel.title)
+                        to_msg = event.message.id
 
-                logging.info(f"Monitoring new messages in channel: {SRC_ID}")
-                await client.run_until_disconnected()
+                        # Forward the message
+                        await asyncio.sleep(1)  # Small delay to avoid flooding
+                        await forward_message(
+                            client, SRC_ID, destination_id, to_msg, from_msg, BATCH_SIZE, MAX_ATTEMPTS
+                        )
+                    except FloodWaitError as e:
+                        # Handle Telegram's rate limiting
+                        logging.warning(f"Flood wait error: Waiting for {e.seconds} seconds")
+                        await asyncio.sleep(e.seconds)
+                    except Exception as e:
+                        logging.error(f"Error while processing message: {e}")
+                    finally:
+                        # Mark the task as done
+                        message_queue.task_done()
 
-            except Exception as e:
-                logging.error(f"An error occurred: {e}")
-                await client.disconnect()
-                
+            # Start the message processing task
+            asyncio.create_task(process_messages())
+
+        #     # Keep the client running
+            await client.run_until_disconnected()
+
     except Exception as error:
-        logging.error(f'main() : {error}')
+        logging.error(f"Error in main function: {str(error)}")
 
 if __name__ == '__main__':
-    keep_alive()
+    # keep_alive()
     asyncio.run(main())

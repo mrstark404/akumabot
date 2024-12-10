@@ -164,39 +164,49 @@ async def getVars(source_id: int, channel_title: str) -> tuple[int, int, int]:
             return DST_ID, TO_MSG, FROM_MSG
     except Exception as error:
         logging.error(f"Error in {getVars.__name__}: {str(error)}")
+        # Fallback values
         return DST_ID, FROM_MSG + 10, FROM_MSG
-    
+
 
 async def main():
     try:
+        # Initialize Telegram client
         client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
         latest_message_queue = asyncio.Queue(maxsize=1)
 
         async with client:
             await client.start()
 
-            # Get source and destination channel details
+            # Fetch channel details
             source_channel = await client.get_entity(SRC_ID)
             destination_channel = await client.get_entity(DST_ID)
             logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
 
+            # Get initial message variables
             destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
 
+            # Event handler for new messages
             @client.on(events.NewMessage(chats=source_channel))
             async def handle_new_message(event):
                 try:
-                    # Keep only the latest message in the queue
+                    # Clear queue to keep only the latest message
                     while not latest_message_queue.empty():
                         latest_message_queue.get_nowait()
+
+                    # Add the latest message to the queue
                     await latest_message_queue.put(event)
+                    logging.info(f"New message queued: {event.message.id}")
                 except Exception as e:
                     logging.error(f"Error in handle_new_message: {str(e)}")
 
+            # Process queued messages
             async def process_messages():
                 while True:
-                    event = await latest_message_queue.get()  # Wait for the latest message
+                    event = await latest_message_queue.get()
                     try:
                         latest_msg_id = event.message.id
+                        logging.info(f"Processing message ID: {latest_msg_id}")
+
                         await forward_message(
                             client, SRC_ID, destination_id, latest_msg_id, from_msg, BATCH_SIZE, MAX_ATTEMPTS
                         )
@@ -208,20 +218,25 @@ async def main():
                     finally:
                         latest_message_queue.task_done()
 
+            # Sync database periodically
             async def sync_database():
                 while True:
                     try:
                         if from_msg < to_msg:
+                            logging.info(f"Syncing messages from {from_msg} to {to_msg}...")
                             await forward_message(
                                 client, SRC_ID, destination_id, to_msg, from_msg, BATCH_SIZE, MAX_ATTEMPTS
                             )
+
+                            # Update message variables
+                            destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
                     except errors.FloodWaitError as e:
-                        logging.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds")
+                        logging.warning(f"FloodWaitError during sync: Sleeping for {e.seconds} seconds")
                         await asyncio.sleep(e.seconds)
                     except Exception as e:
                         logging.error(f"Error in sync_database: {str(e)}")
                     finally:
-                        await asyncio.sleep(7200)  # Wait for 1 hour before syncing again
+                        await asyncio.sleep(7200)  # Sleep for 2 hours before the next sync
 
             # Start tasks
             asyncio.create_task(process_messages())
@@ -232,6 +247,7 @@ async def main():
 
     except Exception as error:
         logging.error(f"Error in main(): {str(error)}")
+
 
 if __name__ == '__main__':
     keep_alive()

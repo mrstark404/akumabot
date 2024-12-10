@@ -73,6 +73,10 @@ async def filter_media_file(client, channel_id,msg_id):
 async def rename_media_file(client, channel_id):
     async for message in client.iter_messages(channel_id):
         try:
+            if message.media and isinstance(message.media, types.MessageMediaDocument):
+                document = message.media.document
+                if document.mime_type == 'image/webp' and any(isinstance(attribute, types.DocumentAttributeSticker) for attribute in document.attributes):
+                    continue  # Skip processing stickers
             formatted_msg = await rename(message.text)
             if formatted_msg != message.text:
                 await client.edit_message(channel_id, message.id, formatted_msg)
@@ -80,20 +84,22 @@ async def rename_media_file(client, channel_id):
             logging.warning(f"FloodWait: Sleeping for {e.seconds} seconds.")
             await asyncio.sleep(e.seconds)
         except Exception as e:
-            logging.error(f"rename_media_file() : {e}")
+            logging.error(f"source_msg_filter() : {e}")
         finally:
-            break
+            break 
          
 def is_sticker(message):
     if isinstance(message.media, types.MessageMediaDocument):
         document = message.media.document
-        if document.mime_type in {'image/gif', 'image/webp', 'application/pdf'}:
+        if document.mime_type in {'image/gif', 'application/pdf'}:
             return True
         
         for attribute in document.attributes:
             if isinstance(attribute, types.DocumentAttributeAnimated):
                 return True
     return False
+
+
 
 async def forward_message(client, source_id, destination_id, to_msg, from_msg, batch_msg, max_attempts):
     try:

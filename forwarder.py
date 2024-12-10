@@ -148,73 +148,84 @@ async def forward_message(client, source_id, destination_id, to_msg, from_msg, b
         logging.error(f"forward_message() : {error}")
 
 
-async def getVars(source_id: int, channel_title: str) -> list[int]:
+async def getVars(source_id: int, channel_title: str) -> tuple[int, int, int]:
     try:
-        vars = await get_channels(source_id, channel_title)
-        if vars is not None:
-            return [vars[0], vars[1]]
+        vars = await get_channel_info(source_id, channel_title)
+        if vars:
+            return vars
         else:
-            return DST_ID, FROM_MSG
+            TO_MSG = FROM_MSG + 10
+            return DST_ID, TO_MSG, FROM_MSG
     except Exception as error:
-        logging.error(f'Error in {getVars.__name__} function: {str(error)}')
+        logging.error(f"Error in {getVars.__name__}: {str(error)}")
+        return DST_ID, FROM_MSG + 10, FROM_MSG
     
 
 async def main():
     try:
-        # Initialize the Telegram client
         client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
-
-        # Message queue to process new messages
-        message_queue = asyncio.Queue()
+        latest_message_queue = asyncio.Queue(maxsize=1)
 
         async with client:
-            # Start the client
             await client.start()
 
-        #     # Get the source channel details
+            # Get source and destination channel details
             source_channel = await client.get_entity(SRC_ID)
             destination_channel = await client.get_entity(DST_ID)
-            
-            logging.info(f"Source Channel: {source_channel.title} ({SRC_ID}), Destination Channel: {destination_channel.title} ({DST_ID})")
-            logging.info(f"Monitoring Source Channel")
+            logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
 
-            # Event handler for new messages
+            destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
+
             @client.on(events.NewMessage(chats=source_channel))
             async def handle_new_message(event):
-                await message_queue.put(event)  # Add new messages to the queue
+                try:
+                    # Keep only the latest message in the queue
+                    while not latest_message_queue.empty():
+                        latest_message_queue.get_nowait()
+                    await latest_message_queue.put(event)
+                except Exception as e:
+                    logging.error(f"Error in handle_new_message: {str(e)}")
 
-            # Process messages from the queue
             async def process_messages():
                 while True:
-                    event = await message_queue.get()  # Get a message from the queue
+                    event = await latest_message_queue.get()  # Wait for the latest message
                     try:
-                        # Fetch destination ID and starting message
-                        destination_id, from_msg = await getVars(SRC_ID, source_channel.title)
-                        to_msg = event.message.id
-
-                        # Forward the message
-                        await asyncio.sleep(1)  # Small delay to avoid flooding
+                        latest_msg_id = event.message.id
                         await forward_message(
-                            client, SRC_ID, destination_id, to_msg, from_msg, BATCH_SIZE, MAX_ATTEMPTS
+                            client, SRC_ID, destination_id, latest_msg_id, from_msg, BATCH_SIZE, MAX_ATTEMPTS
                         )
-                    except FloodWaitError as e:
-                        # Handle Telegram's rate limiting
-                        logging.warning(f"Flood wait error: Waiting for {e.seconds} seconds")
+                    except errors.FloodWaitError as e:
+                        logging.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds")
                         await asyncio.sleep(e.seconds)
                     except Exception as e:
-                        logging.error(f"Error while processing message: {e}")
+                        logging.error(f"Error in process_messages: {str(e)}")
                     finally:
-                        # Mark the task as done
-                        message_queue.task_done()
+                        latest_message_queue.task_done()
 
-            # Start the message processing task
+            async def sync_database():
+                while True:
+                    try:
+                        if from_msg < to_msg:
+                            await forward_message(
+                                client, SRC_ID, destination_id, to_msg, from_msg, BATCH_SIZE, MAX_ATTEMPTS
+                            )
+                    except errors.FloodWaitError as e:
+                        logging.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds")
+                        await asyncio.sleep(e.seconds)
+                    except Exception as e:
+                        logging.error(f"Error in sync_database: {str(e)}")
+                    finally:
+                        await asyncio.sleep(7200)  # Wait for 1 hour before syncing again
+
+            # Start tasks
             asyncio.create_task(process_messages())
+            asyncio.create_task(sync_database())
 
-        #     # Keep the client running
+            # Keep client running
             await client.run_until_disconnected()
 
     except Exception as error:
-        logging.error(f"Error in main function: {str(error)}")
+        logging.error(f"Error in main(): {str(error)}")
 
 if __name__ == '__main__':
     keep_alive()

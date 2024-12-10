@@ -18,6 +18,11 @@ logging.getLogger("pymongo").setLevel(logging.ERROR)# SUPRESS "message": "Waitin
 collectionUri = DATABASE_URL
 #===============#
 
+#Things to do
+'''
+- update_channels - update vars
+- 
+'''
 
 client = pymongo.MongoClient(collectionUri)
 database = client.get_database('akumabot')
@@ -65,7 +70,7 @@ async def get_channel_info(source_id: int, channel_title: str):
                 dst_id = vars['dst_id']
                 from_msg = vars['from_msg']
                 to_msg = vars['to_msg']
-            return dst_id, from_msg, to_msg
+            return dst_id, to_msg, from_msg
         return None
     except Exception as error:
         logging.error(f"get_channel_info() : {error}")

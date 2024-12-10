@@ -182,8 +182,12 @@ async def main():
             destination_channel = await client.get_entity(DST_ID)
             logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
 
-            # Get initial message variables
-            destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
+            # Initialize message variables with fallback values
+            try:
+                destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
+            except Exception as e:
+                logging.error(f"Error initializing message variables: {str(e)}")
+                destination_id, to_msg, from_msg = DST_ID, FROM_MSG + 10, FROM_MSG  # Fallback values
 
             # Event handler for new messages
             @client.on(events.NewMessage(chats=source_channel))
@@ -220,6 +224,7 @@ async def main():
 
             # Sync database periodically
             async def sync_database():
+                nonlocal to_msg, from_msg, destination_id  # Ensure variables are accessible
                 while True:
                     try:
                         if from_msg < to_msg:
@@ -247,6 +252,7 @@ async def main():
 
     except Exception as error:
         logging.error(f"Error in main(): {str(error)}")
+
 
 
 if __name__ == '__main__':

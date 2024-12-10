@@ -162,10 +162,10 @@ async def getVars(source_id: int, channel_title: str) -> tuple[int, int, int]:
         else:
             TO_MSG = FROM_MSG + 10
             return DST_ID, TO_MSG, FROM_MSG
+
     except Exception as error:
         logging.error(f"Error in {getVars.__name__}: {str(error)}")
-        # Fallback values
-        return DST_ID, FROM_MSG + 10, FROM_MSG
+
 
 
 async def main():
@@ -182,12 +182,7 @@ async def main():
             destination_channel = await client.get_entity(DST_ID)
             logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
 
-            # Initialize message variables with fallback values
-            try:
-                destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
-            except Exception as e:
-                logging.error(f"Error initializing message variables: {str(e)}")
-                destination_id, to_msg, from_msg = DST_ID, FROM_MSG + 10, FROM_MSG  # Fallback values
+            destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
 
             # Event handler for new messages
             @client.on(events.NewMessage(chats=source_channel))
@@ -209,7 +204,7 @@ async def main():
                     event = await latest_message_queue.get()
                     try:
                         latest_msg_id = event.message.id
-                        logging.info(f"Processing message ID: {latest_msg_id}")
+                        logging.info(f"Processing latest message ID: {latest_msg_id}")
 
                         await forward_message(
                             client, SRC_ID, destination_id, latest_msg_id, from_msg, BATCH_SIZE, MAX_ATTEMPTS
@@ -252,8 +247,6 @@ async def main():
 
     except Exception as error:
         logging.error(f"Error in main(): {str(error)}")
-
-
 
 if __name__ == '__main__':
     keep_alive()

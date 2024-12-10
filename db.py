@@ -18,11 +18,6 @@ logging.getLogger("pymongo").setLevel(logging.ERROR)# SUPRESS "message": "Waitin
 collectionUri = DATABASE_URL
 #===============#
 
-#Things to do
-'''
-- update_channels - update vars
-- 
-'''
 
 client = pymongo.MongoClient(collectionUri)
 database = client.get_database('akumabot')
@@ -44,10 +39,10 @@ async def update_channels(source_id: int, from_msgid: int, to_msgid: int):
         channels.update_one(query, update) 
             
     except Exception as error:
-        logging.error(f"get_channels() : {error}") 
+        logging.error(f"get_channel_info() : {error}") 
 
-async def create_channels(source_id: int, channel_title):
-        create_channels = {
+async def create_channel(source_id: int, channel_title):
+        channel_info = {
         "title": channel_title,
         "src_id": source_id,
         "dst_id": DST_ID,
@@ -55,21 +50,23 @@ async def create_channels(source_id: int, channel_title):
         "to_msg": None,
         "date_time":  None
         }
-        channels.insert_one(create_channels)
-        await get_channels(source_id, channel_title)
+        channels.insert_one(channel_info)
+        await get_channel_info(source_id, channel_title)
         
-async def get_channels(source_id: int, channel_title: str):
+async def get_channel_info(source_id: int, channel_title: str):
     try:
         query = {'src_id': source_id}
         channel_exist = channels.count_documents(query)
-        if channel_exist == 0:#Channel doesn't EXIST
-            await create_channels(source_id, channel_title) 
+        if channel_exist == 0:
+            await create_channel(source_id, channel_title) 
         else:
             bot_vars = channels.find(query)
             for vars in bot_vars:
                 dst_id = vars['dst_id']
                 from_msg = vars['from_msg']
-            return [dst_id, from_msg]
+                to_msg = vars['to_msg']
+            return dst_id, from_msg, to_msg
+        return None
     except Exception as error:
-        logging.error(f"get_channels() : {error}")
+        logging.error(f"get_channel_info() : {error}")
         

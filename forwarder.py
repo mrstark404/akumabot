@@ -154,18 +154,20 @@ async def forward_message(client, source_id, destination_id, to_msg, from_msg, b
         logging.error(f"forward_message() : {error}")
 
 
-async def getVars(source_id: int, channel_title: str) -> tuple[int, int, int]:
+async def getVars(client, source_id: int, channel_title: str) -> tuple[int, int, int]:
     try:
         vars = await get_channel_info(source_id, channel_title)
         if vars:
             return vars
         else:
-            TO_MSG = FROM_MSG + 10
+            latest_message = await client.get_messages(source_id, limit=1)
+        if latest_message:
+            TO_MSG = latest_message[0].id            
             return DST_ID, TO_MSG, FROM_MSG
-
+        
+        return DST_ID, FROM_MSG + 10, FROM_MSG
     except Exception as error:
         logging.error(f"Error in {getVars.__name__}: {str(error)}")
-
 
 
 async def main():
@@ -182,7 +184,7 @@ async def main():
             destination_channel = await client.get_entity(DST_ID)
             logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
 
-            destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
+            destination_id, to_msg, from_msg = await getVars(client, SRC_ID, source_channel.title)
 
             # Event handler for new messages
             @client.on(events.NewMessage(chats=source_channel))

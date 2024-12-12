@@ -154,7 +154,7 @@ async def forward_message(client, source_id, destination_id, to_msg, from_msg, b
         logging.error(f"forward_message() : {error}")
 
 
-async def getVars(client, source_id: int, channel_title: str) -> tuple[int, int, int]:
+async def getVars(source_id: int, channel_title: str) -> tuple[int, int, int]:
     try:
         vars = await get_channel_info(source_id, channel_title)
         if vars:
@@ -179,7 +179,7 @@ async def main():
             destination_channel = await client.get_entity(DST_ID)
             logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
 
-            destination_id, from_msg = await getVars(client, SRC_ID, source_channel.title)
+            destination_id, from_msg = await getVars(SRC_ID, source_channel.title)
 
 
             # Event handler for new messages
@@ -238,7 +238,7 @@ async def main():
                     except Exception as e:
                         logging.error(f"Error in sync_database: {str(e)}")
                     finally:
-                        await asyncio.sleep(7200)  # Sleep for 2 hours before the next sync
+                        await asyncio.sleep(3600)  # Sleep for 2 hours before the next sync
 
             # Start tasks
             asyncio.create_task(process_messages())

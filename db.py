@@ -69,8 +69,7 @@ async def get_channel_info(source_id: int, channel_title: str):
             for vars in bot_vars:
                 dst_id = vars['dst_id']
                 from_msg = vars['from_msg']
-                to_msg = vars['to_msg']
-            return dst_id, to_msg, from_msg
+            return dst_id, from_msg
         return None
     except Exception as error:
         logging.error(f"get_channel_info() : {error}")

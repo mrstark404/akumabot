@@ -16,14 +16,6 @@ logging.basicConfig(
 
 )
 
-#================#
-api_id = API_ID
-api_hash = API_HASH
-session = SESSION
-source_id = SRC_ID
-batch_size = BATCH_SIZE
-max_attempts = MAX_ATTEMPTS
-#=================#
 
 async def rename(msg_caption):
     filter_msgs = [
@@ -42,12 +34,9 @@ async def rename(msg_caption):
     return renamed_msg
 
 def get_video_duration(message):
-    # Check if the message has media and it's a document
     if isinstance(message.media, MessageMediaDocument):
-        # Access the document's attributes
         for attribute in message.media.document.attributes:
             if isinstance(attribute, DocumentAttributeVideo):
-                # Return the duration
                 return attribute.duration
     return None
 
@@ -73,66 +62,65 @@ async def filter_media_file(client, channel_id,msg_id):
 async def rename_media_file(client, channel_id):
     async for message in client.iter_messages(channel_id):
         try:
-            if message.media and isinstance(message.media, types.MessageMediaDocument):
-                document = message.media.document
-                if document.mime_type == 'image/webp' and any(isinstance(attribute, types.DocumentAttributeSticker) for attribute in document.attributes):
-                    continue  # Skip processing stickers
             formatted_msg = await rename(message.text)
             if formatted_msg != message.text:
                 await client.edit_message(channel_id, message.id, formatted_msg)
         except errors.FloodWaitError as e:
-            logging.warning(f"FloodWait: Sleeping for {e.seconds} seconds.")
+            logging.warning(f"Rename FloodWait: Sleeping for {e.seconds} seconds.")
             await asyncio.sleep(e.seconds)
         except Exception as e:
-            logging.error(f"source_msg_filter() : {e}")
+            logging.error(f"{rename_media_file.__name__} : {str(e)}")
         finally:
             break 
          
-def is_sticker(message):
+def is_not_sticker(message):
     if isinstance(message.media, types.MessageMediaDocument):
         document = message.media.document
-        if document.mime_type in {'image/gif', 'application/pdf'}:
-            return True
+        if document.mime_type in {'image/gif', 'application/pdf', 'image/webp'}:
+            return False
         
         for attribute in document.attributes:
             if isinstance(attribute, types.DocumentAttributeAnimated):
+                return False
+    return True
+
+
+async def single_forward(client, source_id, destination_id, msg_id):
+    message = await client.get_messages(source_id, ids=msg_id)
+    if message and message.media:
+        if is_not_sticker(message):
+            filered_msg = await filter_media_file(client, source_id, msg_id) 
+            if filered_msg:
+                await client.send_message(destination_id, message)
+                await rename_media_file(client, destination_id)        
                 return True
     return False
 
-
-
-async def forward_message(client, source_id, destination_id, to_msg, from_msg, batch_msg, max_attempts):
+async def batch_forward(client, source_id, destination_id, from_msg, to_msg, batch_msg, max_attempts):
     try:
         if from_msg == 0:
             from_msg = 1
             
         attempts = 0
         from_msg += 1
-        ismaxattempt = False
+        is_max_attempt = False
         found_media = False
         while from_msg <= to_msg:
             messages_to_send = min(batch_msg, to_msg - from_msg + 1)
             delay = messages_to_send
-            if ismaxattempt == True:
+            if is_max_attempt == True:
                 break
             
             for _ in range(messages_to_send):
                 message = await client.get_messages(source_id, ids=from_msg)
-                if message and message.media:
-                    if not is_sticker(message):
-                        # filtering messages on the basis of duration
-                        filered_msg = await filter_media_file(client, source_id, from_msg) 
-                        if filered_msg:
-                            await client.send_message(destination_id, message)
-                            await rename_media_file(client, destination_id)
-                            found_media = True
-                            attempts = 0  # Reset attempts when a media message is found
+                
+                if await single_forward(client, source_id, destination_id, from_msg):
+                    attempts = 0  
                 else:
-                    # logging.info(f"Skipping non-media message with ID: {from_msg}")
                     attempts += 1
                     if attempts >= max_attempts:
                         logging.info(f"Reached maximum attempts ({max_attempts})")
-                        ismaxattempt = True
+                        is_max_attempt = True
                         break
                     
                 last_msg_id = from_msg
@@ -151,104 +139,133 @@ async def forward_message(client, source_id, destination_id, to_msg, from_msg, b
         await asyncio.sleep(e.seconds)
         
     except Exception as error:
-        logging.error(f"forward_message() : {error}")
+        logging.error(f"{batch_forward.__name__} : {error}")
 
 
-async def getVars(source_id: int, channel_title: str) -> tuple[int, int, int]:
-    try:
-        vars = await get_channel_info(source_id, channel_title)
-        if vars:
-            return vars
-        
-        return DST_ID, FROM_MSG
-    except Exception as error:
-        logging.error(f"Error in {getVars.__name__}: {str(error)}")
 
-
+# Main function to start both client and bot concurrently
 async def main():
     try:
-        # Initialize Telegram client
         client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
-        latest_message_queue = asyncio.Queue(maxsize=1)
+        bot = TelegramClient('forward_bot', API_ID, API_HASH)
+        
+        
+        await client.start()
+        await bot.start(bot_token=BOT_TOKEN)
+        state = {
+        'from_channel': None,
+        'to_channel': None,
+        'from_message': None,
+        'to_message': None
+    }
 
-        async with client:
-            await client.start()
 
-            # Fetch channel details
+
+        async def fetch_channels():
             source_channel = await client.get_entity(SRC_ID)
             destination_channel = await client.get_entity(DST_ID)
             logging.info(f"Source: {source_channel.title}, Destination: {destination_channel.title}")
+            return source_channel, destination_channel
 
-            destination_id, from_msg = await getVars(SRC_ID, source_channel.title)
+        @client.on(events.NewMessage(chats=SRC_ID))
+        async def handle_new_message(event):
+            try:
+                msg_id = event.message.id
+                await single_forward(client, SRC_ID, DST_ID, msg_id)
+            except Exception as e:
+                logging.error(f"Error in handle_new_message: {str(e)}")
 
+        @bot.on(events.NewMessage(pattern='/from_channel'))
+        async def var_from_channel(event):
+            text = " ".join(event.message.text.split()[1:])
+            if text.startswith("-100"):
+                state['from_channel'] = text
+                await event.reply(f"from_channel set to: {state['from_channel']}")
 
-            # Event handler for new messages
-            @client.on(events.NewMessage(chats=source_channel))
-            async def handle_new_message(event):
+        @bot.on(events.NewMessage(pattern='/to_channel'))
+        async def var_to_channel(event):
+            text = " ".join(event.message.text.split()[1:])
+            if text.startswith("-100"):
+                state['to_channel'] = text
+                await event.reply(f"to_channel set to: {state['to_channel']}")
+
+        @bot.on(events.NewMessage(pattern='/from_message'))
+        async def var_from_message(event):
+            text = " ".join(event.message.text.split()[1:])
+            state['from_message'] = text
+            await event.reply(f"from_message set to: {state['from_message']}")
+
+        @bot.on(events.NewMessage(pattern='/to_message'))
+        async def var_to_message(event):
+            text = " ".join(event.message.text.split()[1:])
+            state['to_message'] = text
+            await event.reply(f"to_message set to: {state['to_message']}")
+
+        # Bot command to show current status
+        @bot.on(events.NewMessage(pattern='/status'))
+        async def bot_status(event):
+            status_msg = f"BOT STATUS\n\nfrom_channel: {state['from_channel']}\nto_channel: {state['to_channel']}\nfrom_message: {state['from_message']}\nto_message: {state['to_message']}"
+
+            await event.reply(status_msg)
+
+        # Bot command to start batch forwarding
+        @bot.on(events.NewMessage(pattern='/start_forward'))
+        async def start_batch_forward(event):
+            global batch_task
+            
+            if state['from_channel'] and state['to_channel']:
+                from_channel = int(state['from_channel'])
+                to_channel = int(state['to_channel'])
+                from_message = int(state['from_message'])
+                to_message = int(state['to_message'])
+                
+                batch_task = asyncio.create_task(batch_forward(
+                    client, 
+                    from_channel,
+                    to_channel, 
+                    from_message,
+                    to_message,
+                    BATCH_SIZE,
+                    MAX_ATTEMPTS
+                ))
+                
+                await event.reply("Batch forward started.")               
+                await batch_task
+                await event.reply(f"Forward completed upto {to_message}")               
+                
+            else:
+                await event.reply("Set variables from_channel, to_channel first.")
+
+        # Bot command to stop batch forwarding
+        @bot.on(events.NewMessage(pattern='/stop_forward'))
+        async def stop_batch_forward(event):
+            global batch_task
+            if batch_task and not batch_task.done():
+                batch_task.cancel()
                 try:
-                    # Clear queue to keep only the latest message
-                    while not latest_message_queue.empty():
-                        latest_message_queue.get_nowait()
+                    await batch_task
+                except asyncio.CancelledError:
+                    await event.reply("Task has been cancelled successfully.")
+            else:
+                await event.reply("No active task to cancel.")
 
-                    # Add the latest message to the queue
-                    await latest_message_queue.put(event)
-                    logging.info(f"New message queued: {event.message.id}")
-                except Exception as e:
-                    logging.error(f"Error in handle_new_message: {str(e)}")
-
-            # Process queued messages
-            async def process_messages():
-                while True:
-                    event = await latest_message_queue.get()
-                    try:
-                        latest_msg_id = event.message.id
-                        logging.info(f"Processing latest message ID: {latest_msg_id}")
-
-                        await forward_message(
-                            client, SRC_ID, destination_id, latest_msg_id, from_msg, BATCH_SIZE, MAX_ATTEMPTS
-                        )
-                    except errors.FloodWaitError as e:
-                        logging.warning(f"FloodWaitError: Sleeping for {e.seconds} seconds")
-                        await asyncio.sleep(e.seconds)
-                    except Exception as e:
-                        logging.error(f"Error in process_messages: {str(e)}")
-                    finally:
-                        latest_message_queue.task_done()
-
-            # Sync database periodically
-            async def sync_database():
-                while True:
-                    try:
-                        nonlocal destination_id, from_msg
-                        to_msg = FROM_MSG + 10
-                        latest_message = await client.get_messages(source_id, limit=1)
-                        if latest_message:
-                            to_msg = latest_message[0].id 
-                        if from_msg < to_msg:
-                            logging.info(f"Syncing messages from {from_msg} to {to_msg}...")
-                            await forward_message(
-                                client, SRC_ID, destination_id, to_msg, from_msg, BATCH_SIZE, MAX_ATTEMPTS
-                            )
-
-                            # Update message variables
-                            destination_id, to_msg, from_msg = await getVars(SRC_ID, source_channel.title)
-                    except errors.FloodWaitError as e:
-                        logging.warning(f"FloodWaitError during sync: Sleeping for {e.seconds} seconds")
-                        await asyncio.sleep(e.seconds)
-                    except Exception as e:
-                        logging.error(f"Error in sync_database: {str(e)}")
-                    finally:
-                        await asyncio.sleep(3600)  # Sleep for 2 hours before the next sync
-
-            # Start tasks
-            asyncio.create_task(process_messages())
-            asyncio.create_task(sync_database())
-
-            # Keep client running
+        # Bot command to check bot's status
+        @bot.on(events.NewMessage(pattern='/ping'))
+        async def bot_handler(event):
+            await event.reply("Bot is running.")
+        
+        try:
             await client.run_until_disconnected()
+            await bot.run_until_disconnected()
+        except asyncio.CancelledError:
+            pass  # Handle cancellation gracefully
 
-    except Exception as error:
-        logging.error(f"Error in main(): {str(error)}")
+        await client.disconnect()
+        await bot.disconnect()
+            
+    except Exception as e:
+        logging.error(f"{main.__name__}: {str(e)}")
+
 
 if __name__ == '__main__':
     keep_alive()

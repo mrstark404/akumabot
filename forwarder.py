@@ -170,7 +170,7 @@ async def main():
             try:
                 msg_id = event.message.id
                 await single_forward(client, SRC_ID, DST_ID, msg_id)
-                await update_channels(SRC_ID, from_msg_id=msg_id, to_msgid=msg_id)
+                await update_channels(SRC_ID, from_msg_id=msg_id, to_msg_id=msg_id)
             except Exception as e:
                 logging.error(f"Error in handle_new_message: {str(e)}")
 

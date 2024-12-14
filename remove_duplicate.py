@@ -2,6 +2,7 @@ from telethon.tl.types import DocumentAttributeFilename
 from telethon.errors import FloodWaitError
 import asyncio
 
+delete_status_message = ""
 
 async def delete_message(client, chat, query_msg_id, duplicate_msg_ids):
     chunk_size = 99  # Telegram API limit

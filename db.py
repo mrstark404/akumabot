@@ -31,12 +31,12 @@ if channels is None:
     channels = database['channels']
 
 
-async def update_channels(source_id: int, from_msgid: int, to_msgid: int):
+async def update_channels(source_id: int, from_msg_id: int, to_msg_id: int):
     try:
         date_time = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
         update_channels = {
-            "from_msg": from_msgid,
-            "to_msg": to_msgid,
+            "from_msg": from_msg_id,
+            "to_msg": to_msg_id,
             "date_time":  date_time
         }
         update = {"$set": update_channels}

@@ -6,6 +6,7 @@ load_dotenv()
 
 API_ID = int(getenv('API_ID'))
 API_HASH = getenv('API_HASH')
+BOT_TOKEN = getenv('BOT_TOKEN')
 DATABASE_URL = getenv('DATABASE_URL')
 SESSION = getenv('STRING_SESSION')
 SRC_ID = int(getenv('SRC_ID'))

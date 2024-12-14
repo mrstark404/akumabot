@@ -113,9 +113,7 @@ async def batch_forward(client, source_id, destination_id, from_msg, to_msg, bat
             if is_max_attempt == True:
                 break
             
-            for _ in range(messages_to_send):
-                message = await client.get_messages(source_id, ids=from_msg)
-                
+            for _ in range(messages_to_send):                
                 if await single_forward(client, source_id, destination_id, from_msg):
                     attempts = 0  
                 else:
@@ -172,6 +170,7 @@ async def main():
             try:
                 msg_id = event.message.id
                 await single_forward(client, SRC_ID, DST_ID, msg_id)
+                await update_channels(SRC_ID, from_msg_id=msg_id, to_msgid=msg_id)
             except Exception as e:
                 logging.error(f"Error in handle_new_message: {str(e)}")
 

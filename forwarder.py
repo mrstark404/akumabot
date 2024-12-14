@@ -5,6 +5,7 @@ from telethon.sync import TelegramClient,events
 from telethon.tl.types import MessageMediaDocument, DocumentAttributeVideo
 from db import *
 from config import *
+from remove_duplicate import search_files, delete_status_message
 import asyncio
 import logging
 import re
@@ -15,7 +16,6 @@ logging.basicConfig(
     level=logging.INFO
 
 )
-
 
 async def rename(msg_caption):
     filter_msgs = [
@@ -247,7 +247,32 @@ async def main():
                     await event.reply("Task has been cancelled successfully.")
             else:
                 await event.reply("No active task to cancel.")
-
+                
+        @bot.on(events.NewMessage(pattern='/start_remove_duplicate'))
+        async def start_remove_process(event):
+            msg_id = int(" ".join(event.message.text.split()[1:]))
+            global delete_task
+            delete_task = asyncio.create_task(search_files(client, DST_ID,first_msg_id=msg_id))
+            
+        @bot.on(events.NewMessage(pattern='/stop_remove_duplicate'))
+        async def stop_remove_proccess(event):
+            global delete_task
+            if delete_task and not delete_task.done():
+                delete_task.cancel()
+                try:
+                    await delete_task
+                except asyncio.CancelledError:
+                    await event.reply("Remove duplicate task has been cancelled successfully.")
+            else:
+                await event.reply("No active remove duplicate task to cancel.")
+                
+        @bot.on(events.NewMessage(pattern='/delete_status'))
+        async def delete_status_display(event):
+            if delete_status_message:
+                await event.reply(delete_status_message)
+                
+            await event.reply("No current active delete task")
+                        
         # Bot command to check bot's status
         @bot.on(events.NewMessage(pattern='/ping'))
         async def bot_handler(event):

@@ -58,20 +58,6 @@ async def filter_media_file(client, channel_id,msg_id):
         
     except Exception as e:
         print("An error occurred while fetching video duration:", e)
-        
-async def rename_media_file(client, channel_id):
-    async for message in client.iter_messages(channel_id):
-        try:
-            formatted_msg = await rename(message.text)
-            if formatted_msg != message.text:
-                await client.edit_message(channel_id, message.id, formatted_msg)
-        except errors.FloodWaitError as e:
-            logging.warning(f"Rename FloodWait: Sleeping for {e.seconds} seconds.")
-            await asyncio.sleep(e.seconds)
-        except Exception as e:
-            logging.error(f"{rename_media_file.__name__} : {str(e)}")
-        finally:
-            break 
          
 def is_not_sticker(message):
     if isinstance(message.media, types.MessageMediaDocument):
@@ -84,15 +70,31 @@ def is_not_sticker(message):
                 return False
     return True
 
-
 async def single_forward(client, source_id, destination_id, msg_id):
     message = await client.get_messages(source_id, ids=msg_id)
     if message and message.media:
         if is_not_sticker(message):
             filered_msg = await filter_media_file(client, source_id, msg_id) 
             if filered_msg:
-                await client.send_message(destination_id, message)
-                await rename_media_file(client, destination_id)        
+                renamed_msg = await rename(message.text)
+                if message.video:
+                    await client.send_file(
+                        destination_id, 
+                        message.video,
+                        caption=renamed_msg
+                    )
+                elif message.document:
+                    await client.send_file(
+                        destination_id, 
+                        message.document,
+                        caption=renamed_msg
+                    )
+                elif message.media:
+                    await client.send_file(
+                        destination_id, 
+                        message.media,
+                        caption=renamed_msg
+                    )
                 return True
     return False
 
@@ -158,8 +160,6 @@ async def main():
         'from_message': None,
         'to_message': None
     }
-
-
 
         async def fetch_channels():
             source_channel = await client.get_entity(SRC_ID)
